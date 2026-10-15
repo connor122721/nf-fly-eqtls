@@ -1,0 +1,9 @@
+work/
+output/
+.nextflow/
+.nextflow.log*
+.nextflow.pid
+report.html*
+flowchart.png*
+timeline.html*
+trace.txt*

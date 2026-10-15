@@ -1,0 +1,21 @@
+Bootstrap: docker
+From: rocker/tidyverse:4.3.1
+
+%labels
+    Author Connor S. Murray
+    Version v0.0.1
+    Description "R environment for nf-fly-eqtls expression QC and summaries"
+
+%environment
+    export R_LIBS_USER=/usr/local/lib/R/site-library
+    export R_LIBS=/usr/local/lib/R/site-library
+
+%post
+    R -e "install.packages(c('BiocManager', 'argparse', 'data.table', 'ggplot2', 'arrow'), repos='https://cloud.r-project.org')"
+    R -e "BiocManager::install(c('edgeR', 'limma'), ask=FALSE, update=FALSE)"
+
+%runscript
+    exec Rscript "$@"
+
+%help
+    R/4.3.1 + edgeR/data.table/ggplot2/argparse for nf-fly-eqtls.
