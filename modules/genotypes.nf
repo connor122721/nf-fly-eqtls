@@ -106,13 +106,15 @@ process MakeGenotypeBed {
 
     script:
         """
-        # Treat all samples as diploid on X (avoids haploid handling of unknown sex)
+        # Treat all samples as diploid on X (avoids haploid handling of unknown sex).
+        # --chr-set: use a fly chromosome set so plink2 does not apply human chrX PAR rules.
         printf "#IID\\tSEX\\n" > sex.txt
         awk -v OFS='\\t' '{print \$1, 2}' ${samples} >> sex.txt
 
         plink2 \\
             --vcf ${vcf} \\
             --vcf-half-call missing \\
+            --chr-set ${params.plink_chr_set} \\
             --allow-extra-chr \\
             --chr ${chromosome} \\
             --keep ${samples} \\
