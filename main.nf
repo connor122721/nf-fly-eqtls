@@ -12,12 +12,15 @@ nextflow.enable.dsl=2
  *  4) tensorQTL cis (permutations) per chromosome x K
  *  5) Pool chromosomes, FDR, pick K with most eGenes
  *  6) tensorQTL cis_nominal per chromosome for best K
+ *  7) SNP x condition interaction model (tensorQTL interaction, eigenMT) for best K
+ *  8) Genotype vs normalized expression plots for top eGenes / interaction pairs
  */
 
 include { VCFSamples; GenotypePCA; MakeGenotypeBed } from './modules/genotypes.nf'
 include { PrepExpression } from './modules/expression.nf'
-include { TensorQTLCis; TensorQTLNominal } from './modules/tensorqtl.nf'
+include { TensorQTLCis; TensorQTLNominal; TensorQTLInteraction } from './modules/tensorqtl.nf'
 include { SummarizeCis } from './modules/summarize.nf'
+include { SelectTopPairs; ExtractPlotGenotypes; PlotEQTLs } from './modules/plots.nf'
 
 workflow {
 
@@ -75,4 +78,36 @@ workflow {
         .map { it[0..5] }
 
     TensorQTLNominal(nominal_input, prep.bed)
+
+    // 7) SNP x interaction model for best K (covariates without the interaction variable)
+    if (params.interaction) {
+        int_input = plink
+            .combine(prep.covariates_int.flatten()
+                .map { f -> tuple((f.name =~ /\.K(\d+)\.txt$/)[0][1] as Integer, f) })
+            .combine(best_k)
+            .filter { it[4] == it[6] }
+            .map { it[0..5] }
+
+        int_files = TensorQTLInteraction(int_input, prep.bed, prep.interaction).top.collect()
+    } else {
+        int_files = Channel.value([])
+    }
+
+    // 8) eQTL plots for top pairs
+    top = SelectTopPairs(
+        summary.table,
+        int_files,
+        file("${projectDir}/scripts/select_top_pairs.R"))
+
+    plot_geno = ExtractPlotGenotypes(
+        top.variants,
+        plink.map { [it[1], it[2], it[3]] }.flatten().collect())
+
+    PlotEQTLs(
+        top.pairs,
+        plot_geno.raw,
+        plot_geno.bim,
+        prep.bed,
+        file(params.metadata),
+        file("${projectDir}/scripts/plot_eqtls.R"))
 }

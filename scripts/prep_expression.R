@@ -10,6 +10,7 @@
 #   5) Gene TSS from GTF -> tensorQTL phenotype BED (main chromosomes only)
 #   6) Covariates: model.matrix(formula) (default ~ cage_name + condition)
 #      + optional genotype PCs + K expression PCs (PCs of residuals after known covariates)
+#   7) Optional interaction files: interaction variable (0/1) + covariates without it
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -39,6 +40,7 @@ parser$add_argument("--lib_mad", type="double", default=3, help="Drop samples th
 parser$add_argument("--pca_outlier_p", type="double", default=0.05, help="Bonferroni-corrected Mahalanobis p-value cutoff for expression PCA outliers")
 parser$add_argument("--pca_outlier_npc", type="integer", default=5, help="Number of expression PCs used for outlier detection")
 parser$add_argument("--norm_method", default="int", choices=c("int", "logcpm"), help="int: TMM logCPM + inverse normal transform; logcpm: TMM logCPM only")
+parser$add_argument("--interaction", default="", help="Metadata variable for SNP x variable interaction (e.g. condition); empty = none")
 parser$add_argument("--out_prefix", default="fly", help="Output prefix")
 args <- parser$parse_args()
 
@@ -195,13 +197,16 @@ fwrite(bed, paste0(prefix, ".expression.bed"), sep="\t", quote=FALSE)
 
 meta.s <- meta[match(samps, sample)]
 mm <- model.matrix(form, data=meta.s)
+mm.assign <- attr(mm, "assign")
 
 # Drop aliased (collinear) columns, e.g. cage nested within condition
 qr.mm <- qr(mm)
 if (qr.mm$rank < ncol(mm)) {
   dropped <- colnames(mm)[qr.mm$pivot[(qr.mm$rank + 1):ncol(mm)]]
   msg("WARNING: dropping aliased covariate columns: %s", paste(dropped, collapse=", "))
-  mm <- mm[, qr.mm$pivot[seq_len(qr.mm$rank)], drop=FALSE]
+  keep.cols <- sort(qr.mm$pivot[seq_len(qr.mm$rank)])
+  mm <- mm[, keep.cols, drop=FALSE]
+  mm.assign <- mm.assign[keep.cols]
 }
 known <- mm[, colnames(mm) != "(Intercept)", drop=FALSE]
 if (!is.null(geno.pc)) {
@@ -234,6 +239,47 @@ for (k in ks) {
   out <- data.table(id=colnames(covk), t(covk))
   setnames(out, c("id", samps))
   fwrite(out, paste0(prefix, ".covariates.K", k, ".txt"), sep="\t", quote=FALSE)
+}
+
+### 7) Interaction model inputs ###
+
+# tensorQTL fits expr ~ g + i + g*i + covariates and residualizes i on the covariates,
+# so the interaction variable's own columns must be removed from the covariate files.
+if (args$interaction != "") {
+  iv <- args$interaction
+  if (!iv %in% colnames(meta.s)) stop("Interaction variable not in metadata: ", iv)
+  ivals <- meta.s[[iv]]
+  if (is.factor(ivals)) {
+    if (nlevels(droplevels(ivals)) != 2) stop("Interaction variable must have exactly 2 levels: ", iv)
+    ivals <- droplevels(ivals)
+    inum <- as.integer(ivals == levels(ivals)[2])
+    msg("Interaction %s coded 0 = %s, 1 = %s", iv, levels(ivals)[1], levels(ivals)[2])
+  } else {
+    inum <- as.numeric(ivals)
+  }
+
+  # Model-matrix columns that come from terms involving the interaction variable
+  term.labels <- attr(terms(form), "term.labels")
+  iv.terms <- which(sapply(term.labels, function(t) iv %in% all.vars(as.formula(paste("~", t)))))
+  iv.cols <- make.names(colnames(mm)[mm.assign %in% iv.terms])
+  known.int <- known[, !colnames(known) %in% iv.cols, drop=FALSE]
+  msg("Interaction covariates drop: %s", ifelse(length(iv.cols) > 0, paste(iv.cols, collapse=", "), "(none)"))
+
+  # Interaction must not be explained by the remaining covariates (e.g. cage nested in condition)
+  X0 <- cbind(1, known.int)
+  if (qr(cbind(X0, inum))$rank <= qr(X0)$rank) {
+    stop("Interaction variable ", iv, " is collinear with the remaining covariates; cannot fit SNP x ", iv)
+  }
+
+  # Headerless: tensorQTL treats a 2-column file as a single unnamed interaction
+  fwrite(data.table(samps, inum), paste0(prefix, ".interaction.txt"), sep="\t", col.names=FALSE)
+  for (k in ks) {
+    covk <- if (k > 0) cbind(known.int, expr.pcs[, seq_len(k), drop=FALSE]) else known.int
+    if (ncol(covk) == 0) next
+    out <- data.table(id=colnames(covk), t(covk))
+    setnames(out, c("id", samps))
+    fwrite(out, paste0(prefix, ".covariates_int.K", k, ".txt"), sep="\t", quote=FALSE)
+  }
 }
 
 ### Outputs: sample list, QC tables, plots ###

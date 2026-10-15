@@ -24,6 +24,10 @@ flowchart TD
     T --> Z["Pool chromosomes, FDR,<br/>pick K with most eGenes"]
     Z --> N["tensorQTL cis_nominal<br/>for best K"]
     B --> N
+    Z --> I["tensorQTL SNP x condition<br/>interaction (eigenMT) for best K"]
+    B --> I
+    Z --> F["eQTL plots: genotype vs<br/>normalized expression"]
+    I --> F
 ```
 
 ### Expression QC and normalization (`scripts/prep_expression.R`)
@@ -48,6 +52,30 @@ QC outputs: `fly.sample_qc.tsv`, `fly.expression_qc.pdf` (library size, PCA by c
 - tensorQTL `cis` runs per chromosome × K, using `cis_window` around the TSS (default ±100 kb) and `permutations`.
 - The summary step pools all chromosomes for each K, applies BH FDR to `pval_beta`, and counts eGenes. It picks the K with the most eGenes (ties go to fewer PCs) and writes `fly.cis_eqtl.K<best>.all_chroms.txt.gz`.
 - tensorQTL `cis_nominal` then runs for that K and writes parquet files per chromosome. You can force a K with `--best_k 10`; it must be one of the values in `expr_pcs`.
+
+### SNP × condition interaction model
+
+For each gene, the interaction run tests every cis SNP with:
+
+```
+expression ~ SNP + condition + SNP×condition + cage + expression PCs (best K)
+```
+
+This uses tensorQTL `cis_nominal --interaction` with `--best_only`. Settings:
+
+- `interaction = "condition"`. It must be a 2-level metadata column. `prep_expression.log` reports which level is coded 0 and which is 1. A positive `b_gi` means the SNP effect is stronger in the level coded 1.
+- tensorQTL regresses the interaction variable on the covariates. So the interaction run uses `fly.covariates_int.K*.txt`, which are the same covariates minus `condition`. The expression PCs are still computed after removing condition and cage.
+- Each gene's lead interaction SNP is corrected for the number of tests within the gene using eigenMT (`pval_emt`). BH FDR is then applied across all genes on all chromosomes (`fdr_gi`). Results go to `summary/fly.interaction.top_assoc.all_chroms.txt.gz`.
+- `maf_threshold_interaction` sets the MAF a SNP must have within each condition. Set `interaction_all_pairs = true` to also write every SNP-gene pair to parquet.
+- Set `--interaction ""` to skip this run.
+
+### eQTL plots
+
+These cover the top `n_plot` eGenes from the main model (lead SNP per gene) and the top `n_plot` genes from the interaction model.
+
+- Each plot shows normalized expression (y) against genotype (x, e.g. `AA`/`AG`/`GG`, with n per class).
+- Main-model plots are colored by `plot_group`. Interaction plots split the boxes by condition and draw median lines per condition.
+- Output: `plots/fly.eqtl_plots.main.pdf` and `plots/fly.eqtl_plots.interaction.pdf`.
 
 ## Usage
 
@@ -103,6 +131,9 @@ expression/       fly.expression.bed, fly.covariates.K*.txt, fly.samples.txt, QC
 tensorqtl_cis/    fly.chr<chr>.K<k>.cis_qtl.txt.gz
 summary/          fly.egenes_by_K.{tsv,pdf}, best_k, fly.cis_eqtl.K<best>.all_chroms.txt.gz
 tensorqtl_nominal/ fly.chr<chr>.K<best>.cis_qtl_pairs.<chr>.parquet
+tensorqtl_interaction/ fly.chr<chr>.K<best>.interaction.cis_qtl_top_assoc.txt.gz
+summary/          fly.interaction.top_assoc.all_chroms.txt.gz, fly.plot_pairs.tsv
+plots/            fly.eqtl_plots.main.pdf, fly.eqtl_plots.interaction.pdf
 ```
 
 ## Notes

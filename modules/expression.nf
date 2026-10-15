@@ -25,6 +25,8 @@ process PrepExpression {
         path "${params.prefix}.expression.bed", emit: bed
         path "${params.prefix}.covariates.K*.txt", emit: covariates
         path "${params.prefix}.samples.txt", emit: sample_list
+        path "${params.prefix}.interaction.txt", emit: interaction, optional: true
+        path "${params.prefix}.covariates_int.K*.txt", emit: covariates_int, optional: true
         path "${params.prefix}.sample_qc.tsv"
         path "${params.prefix}.expr_pc_variance.tsv"
         path "${params.prefix}.gene_r2_known_covariates.tsv"
@@ -52,6 +54,7 @@ process PrepExpression {
             --lib_mad ${params.lib_mad} \\
             --pca_outlier_p ${params.pca_outlier_p} \\
             --norm_method ${params.norm_method} \\
+            --interaction "${params.interaction ?: ''}" \\
             --out_prefix ${params.prefix} 2>&1 | tee prep_expression.log
         """
 }

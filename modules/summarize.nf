@@ -18,7 +18,7 @@ process SummarizeCis {
         path "${params.prefix}.egenes_by_K.tsv"
         path "${params.prefix}.egenes_by_K.pdf"
         path "${params.prefix}.egenes_by_chrom.K*.tsv"
-        path "${params.prefix}.cis_eqtl.K*.all_chroms.txt.gz"
+        path "${params.prefix}.cis_eqtl.K*.all_chroms.txt.gz", emit: table
 
     script:
         """
