@@ -15,6 +15,8 @@ parser$add_argument("--genotypes", required=TRUE, help="plink2 --export A .raw f
 parser$add_argument("--bim", required=TRUE, help="Concatenated .bim lines for plotted variants")
 parser$add_argument("--expression", required=TRUE, help="tensorQTL phenotype BED")
 parser$add_argument("--metadata", required=TRUE, help="Sample metadata")
+parser$add_argument("--covariates", default="", help="Main-model covariate file (best K) for residualized panel")
+parser$add_argument("--covariates_int", default="", help="Interaction covariate file (best K, no condition)")
 parser$add_argument("--sample_col", default="sample", help="Sample ID column in metadata")
 parser$add_argument("--group", default="condition", help="Metadata column for coloring / facets")
 parser$add_argument("--out_prefix", default="fly", help="Output prefix")
@@ -31,6 +33,27 @@ setnames(expr, 1:4, c("chr", "start", "end", "phenotype_id"))
 expr <- expr[phenotype_id %in% pairs$phenotype_id]
 expr.long <- melt(expr[, -(1:3)], id.vars="phenotype_id", variable.name="sample", value.name="expression")
 expr.long[, sample := as.character(sample)]
+expr.long[, scale := "Normalized expression"]
+
+# Residualized expression: expression with the model covariates regressed out.
+# Main model: all covariates (cage, condition, PCs). Interaction model: covariates
+# without condition, so the condition main effect stays visible.
+residualize <- function(cov.file) {
+  cv <- fread(cov.file)
+  X <- cbind(1, t(as.matrix(cv[, -1, with=FALSE])))
+  smp <- colnames(cv)[-1]
+  Y <- t(as.matrix(expr[, smp, with=FALSE]))
+  R <- lm.fit(X, Y)$residuals
+  out <- data.table(sample=smp, R)
+  setnames(out, c("sample", expr$phenotype_id))
+  out <- melt(out, id.vars="sample", variable.name="phenotype_id", value.name="expression")
+  out[, phenotype_id := as.character(phenotype_id)]
+  out[, scale := "Residualized (covariates removed)"]
+  out
+}
+resid.list <- list()
+if (args$covariates != "" && file.exists(args$covariates) && file.size(args$covariates) > 0) resid.list$main <- residualize(args$covariates)
+if (args$covariates_int != "" && file.exists(args$covariates_int) && file.size(args$covariates_int) > 0) resid.list$interaction <- residualize(args$covariates_int)
 
 # Genotypes: columns <variant>_<counted allele>, values = counted-allele dosage
 geno <- fread(args$genotypes)
@@ -52,13 +75,16 @@ geno.long[, genotype := factor(
 
 plot_pair <- function(i) {
   pr <- pairs[i]
-  d <- merge(expr.long[phenotype_id == pr$phenotype_id],
+  ex <- expr.long[phenotype_id == pr$phenotype_id]
+  if (!is.null(resid.list[[pr$model]])) ex <- rbind(ex, resid.list[[pr$model]][phenotype_id == pr$phenotype_id])
+  d <- merge(ex,
              geno.long[variant_id == pr$variant_id & !is.na(dosage)], by="sample")
   if (nrow(d) == 0) return(NULL)
   if (has.group) d <- merge(d, meta[, c("sample", args$group), with=FALSE], by="sample")
   lv <- unique(d[order(dosage), as.character(genotype)])
   d[, genotype := factor(as.character(genotype), levels=lv)]
-  ttl <- sprintf("%s  |  %s", pr$phenotype_id, pr$variant_id)
+  sym <- if ("gene_symbol" %in% names(pr) && !is.na(pr$gene_symbol)) pr$gene_symbol else pr$phenotype_id
+  ttl <- sprintf("%s (%s)  |  %s", sym, pr$phenotype_id, pr$variant_id)
   sub <- sprintf("%s model: p = %.2g, FDR = %.2g, beta = %.2f", pr$model, pr$pval, pr$fdr, pr$beta)
 
   if (pr$model == "interaction" && has.group) {
@@ -80,14 +106,15 @@ plot_pair <- function(i) {
       p <- p + geom_jitter(width=0.2, size=0.8, alpha=0.6)
     }
   }
-  n.tab <- d[, .N, by=genotype]
+  n.tab <- d[scale == "Normalized expression", .N, by=genotype]
   p + theme_bw() +
     scale_x_discrete(labels=setNames(paste0(n.tab$genotype, "\n(n=", n.tab$N, ")"), n.tab$genotype)) +
-    labs(x="Genotype", y="Normalized expression", title=ttl, subtitle=sub)
+    facet_wrap(~scale, scales="free_y") +
+    labs(x="Genotype", y="Expression", title=ttl, subtitle=sub)
 }
 
 for (m in unique(pairs$model)) {
-  pdf(paste0(args$out_prefix, ".eqtl_plots.", m, ".pdf"), width=7, height=5)
+  pdf(paste0(args$out_prefix, ".eqtl_plots.", m, ".pdf"), width=11, height=5)
   for (i in which(pairs$model == m)) {
     p <- plot_pair(i)
     if (!is.null(p)) print(p)

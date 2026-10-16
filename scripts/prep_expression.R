@@ -28,7 +28,7 @@ parser$add_argument("--chromosomes", required=TRUE, help="File with chromosomes 
 parser$add_argument("--genotyped_samples", default=NULL, help="Samples present in the VCF, one per line")
 parser$add_argument("--geno_pcs", default=NULL, help="plink2 .eigenvec file")
 parser$add_argument("--n_geno_pcs", type="integer", default=0, help="Number of genotype PCs to include")
-parser$add_argument("--expr_pcs", default="0,5,10,20", help="Comma list of expression PC counts (one covariate file each)")
+parser$add_argument("--expr_pcs", default="0:100:5", help="Expression PC counts, one covariate file each: comma list and/or from:to:by ranges (e.g. 0:100:5)")
 parser$add_argument("--sample_col", default="sample", help="Sample ID column in metadata")
 parser$add_argument("--formula", default="~ cage_name + condition", help="Known covariate model")
 parser$add_argument("--factor_covariates", default="cage_name,condition", help="Metadata columns treated as factors")
@@ -224,7 +224,16 @@ pca.res <- prcomp(resid, center=TRUE, scale.=FALSE)
 expr.pcs <- pca.res$x
 colnames(expr.pcs) <- paste0("expr_PC", seq_len(ncol(expr.pcs)))
 
-ks <- sort(unique(as.integer(strsplit(args$expr_pcs, ",")[[1]])))
+# "0,5,10" and/or "0:100:5"
+parse_ks <- function(x) {
+  unlist(lapply(trimws(strsplit(x, ",")[[1]]), function(tok) {
+    if (grepl(":", tok)) {
+      r <- as.integer(strsplit(tok, ":")[[1]])
+      seq(r[1], r[2], by=ifelse(length(r) > 2, r[3], 1))
+    } else as.integer(tok)
+  }))
+}
+ks <- sort(unique(parse_ks(args$expr_pcs)))
 max.k <- length(samps) - ncol(known) - 10
 if (any(ks > max.k)) {
   msg("WARNING: dropping K > %d (too many covariates for %d samples)", max.k, length(samps))
@@ -297,6 +306,14 @@ fwrite(data.table(gene_id=rownames(expr), r2_known=r2), paste0(prefix, ".gene_r2
 
 col.var <- intersect(c("condition", model.vars), colnames(meta))[1]
 shape.var <- setdiff(intersect(c("cage_name", model.vars), colnames(meta)), col.var)[1]
+
+# Objects for expression_diagnostics.R
+saveRDS(list(counts=counts, qc=qc.out, meta=meta.s, meta_all=meta[sample %in% colnames(counts)], samples=samps, model_vars=model.vars,
+             formula=args$formula, norm_samples=norm$y$samples, genes_kept=rownames(norm$logcpm),
+             logcpm=norm$logcpm, expr=expr, tss=genes, known=known,
+             expr_pcs=expr.pcs[, seq_len(min(100, ncol(expr.pcs))), drop=FALSE],
+             resid_sdev=pca.res$sdev, pca_raw=pca1, r2_known=r2, norm_method=args$norm_method),
+        paste0(prefix, ".prep_objects.rds"))
 
 pdf(paste0(prefix, ".expression_qc.pdf"), width=8, height=6)
 

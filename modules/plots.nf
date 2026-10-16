@@ -16,12 +16,14 @@ process SelectTopPairs {
     input:
         path main_table
         path interaction_files
+        path gene_map
         path script
 
     output:
         path "${params.prefix}.plot_pairs.tsv", emit: pairs
         path "plot_variants.txt", emit: variants
-        path "${params.prefix}.interaction.*", optional: true
+        path "${params.prefix}.interaction.top_assoc.all_chroms.txt.gz", emit: int_table, optional: true
+        path "${params.prefix}.interaction.{sig_genes,sig_by_chrom}*", optional: true
 
     script:
         """
@@ -32,6 +34,7 @@ process SelectTopPairs {
             --interaction_list interaction.list \\
             --n_plot ${params.n_plot} \\
             --fdr ${params.fdr} \\
+            --gene_map ${gene_map} \\
             --out_prefix ${params.prefix}
         """
 }
@@ -90,6 +93,8 @@ process PlotEQTLs {
         path bim
         path expression_bed
         path metadata
+        path covariates
+        path covariates_int
         path script
 
     output:
@@ -103,6 +108,8 @@ process PlotEQTLs {
             --bim ${bim} \\
             --expression ${expression_bed} \\
             --metadata ${metadata} \\
+            --covariates ${covariates} \\
+            --covariates_int ${covariates_int} \\
             --sample_col "${params.sample_col}" \\
             --group "${params.plot_group}" \\
             --out_prefix ${params.prefix}

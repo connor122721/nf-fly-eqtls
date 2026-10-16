@@ -49,6 +49,7 @@ QC outputs: `fly.sample_qc.tsv`, `fly.expression_qc.pdf` (library size, PCA by c
 
 ### QTL mapping (`modules/tensorqtl.nf`, `scripts/summarize_cis.R`)
 
+- `expr_pcs` sets which numbers of expression PCs (K) are tried. It accepts a list and/or `from:to:by` ranges. The default `0:100:5` gives 21 models. The eGene-by-K curve is in `summary/fly.egenes_by_K.pdf`.
 - tensorQTL `cis` runs per chromosome × K, using `cis_window` around the TSS (default ±100 kb) and `permutations`.
 - The summary step pools all chromosomes for each K, applies BH FDR to `pval_beta`, and counts eGenes. It picks the K with the most eGenes (ties go to fewer PCs) and writes `fly.cis_eqtl.K<best>.all_chroms.txt.gz`.
 - tensorQTL `cis_nominal` then runs for that K and writes parquet files per chromosome. You can force a K with `--best_k 10`; it must be one of the values in `expr_pcs`.
@@ -67,13 +68,48 @@ This uses tensorQTL `cis_nominal --interaction` with `--best_only`. Settings:
 - tensorQTL regresses the interaction variable on the covariates. So the interaction run uses `fly.covariates_int.K*.txt`, which are the same covariates minus `condition`. The expression PCs are still computed after removing condition and cage.
 - Each gene's lead interaction SNP is corrected for the number of tests within the gene using eigenMT (`pval_emt`). BH FDR is then applied across all genes on all chromosomes (`fdr_gi`). Results go to `summary/fly.interaction.top_assoc.all_chroms.txt.gz`.
 - `maf_threshold_interaction` sets the MAF a SNP must have within each condition. Set `interaction_all_pairs = true` to also write every SNP-gene pair to parquet.
-- Set `--interaction ""` to skip this run.
+- Set `--interaction false` to skip this run.
+
+### Gene symbols
+
+`gene_annotation` points at FlyBase's `fbgn_annotation_ID_fb_*.tsv.gz`. It is used to add `gene_symbol` and `annotation_ID` (CG number) to every results table and plot.
+
+- FBgns from the dm3 annotation that FlyBase has since merged or renamed are resolved through the secondary-FBgn column. The map's `match` column says `primary`, `secondary` or `unmapped`.
+- Unmapped genes keep their FBgn as the label.
+- The default is a URL that Nextflow downloads. If your cluster can't reach FlyBase, download the file once and point the parameter at the local copy. Use `--gene_annotation false` to skip symbols.
+
+### Expression diagnostics
+
+`expression/diagnostics/fly.expression_diagnostics.pdf` is a multi-page check that the expression data are ready for mapping:
+
+| Area | Plots |
+|---|---|
+| Sample QC | library size and detected genes per cage×condition group; Mahalanobis outlier test; QC outcome per group (`fly.qc_by_group.tsv`) |
+| Normalization | TMM factors per group; per-sample logCPM densities before and after TMM; relative log expression (RLE) per sample |
+| Gene filter | mean-expression histogram of kept vs. removed genes; mean–variance trend; tested genes per chromosome |
+| Sample structure | sample–sample correlation heatmap ordered by group; per-sample mean correlation; expression PCs 1–6 colored by cage, condition and library size |
+| Covariates | R² heatmap of expression PCs vs. cage, condition, library size, detected genes and genotype PCs, both before and after covariate removal (`fly.pc_covariate_r2.tsv`) |
+| Residual PCs | scree plus cumulative variance for PCs 1–100; residual PC1/PC2 colored by cage and condition |
+| Per-gene variance | R² explained by cage, by condition and by the full model; top responsive genes with symbols (`fly.top_genes_by_covariate.tsv`) |
+| Genotypes | genotype PCA colored by cage and condition |
+
+### Manhattan and QQ plots
+
+`plots/fly.manhattan_qq.pdf` contains:
+
+- **SNP-level Manhattan** from the nominal pass at the best K. Each SNP gets its smallest p-value across genes. SNPs with p < `manhattan_keep_p` are all kept; a random `manhattan_thin_frac` of the rest are drawn. Lead SNPs of eGenes are shown in red.
+- **Gene-level Manhattans:** one point per gene at its lead SNP, for the main model and for the interaction model. Significant genes are red, and the top `n_label` genes are labeled by symbol.
+- **QQ plots** with λ for the main model (`pval_beta`) and the interaction model (`pval_emt`).
+- **Summaries:** significant genes per chromosome, lead-SNP distance to the TSS, effect sizes, and lead-SNP MAF.
 
 ### eQTL plots
 
 These cover the top `n_plot` eGenes from the main model (lead SNP per gene) and the top `n_plot` genes from the interaction model.
 
-- Each plot shows normalized expression (y) against genotype (x, e.g. `AA`/`AG`/`GG`, with n per class).
+- Each page has two panels. Both plot expression (y) against genotype (x, e.g. `AA`/`AG`/`GG`, with n per class).
+  - Left: normalized expression, which is what tensorQTL receives.
+  - Right: expression with the model covariates regressed out. For main-model pairs that means cage, condition and the expression PCs. Interaction pairs use the interaction covariates, so the condition main effect stays visible.
+- Titles show the gene symbol and FBgn.
 - Main-model plots are colored by `plot_group`. Interaction plots split the boxes by condition and draw median lines per condition.
 - Output: `plots/fly.eqtl_plots.main.pdf` and `plots/fly.eqtl_plots.interaction.pdf`.
 
@@ -129,11 +165,13 @@ apptainer push fly_eqtl_r.sif library://connmurr243/wgs/fly_eqtl_r.sif:latest
 genotypes/        vcf_samples.txt, fly.geno_pca.eigenvec, bed/fly.<chr>.{bed,bim,fam}
 expression/       fly.expression.bed, fly.covariates.K*.txt, fly.samples.txt, QC tables + PDF
 tensorqtl_cis/    fly.chr<chr>.K<k>.cis_qtl.txt.gz
-summary/          fly.egenes_by_K.{tsv,pdf}, best_k, fly.cis_eqtl.K<best>.all_chroms.txt.gz
+summary/          fly.egenes_by_K.{tsv,pdf}, best_k, fly.cis_eqtl.K<best>.all_chroms.txt.gz, fly.egenes.K<best>.fdr0.05.tsv
 tensorqtl_nominal/ fly.chr<chr>.K<best>.cis_qtl_pairs.<chr>.parquet
 tensorqtl_interaction/ fly.chr<chr>.K<best>.interaction.cis_qtl_top_assoc.txt.gz
-summary/          fly.interaction.top_assoc.all_chroms.txt.gz, fly.plot_pairs.tsv
-plots/            fly.eqtl_plots.main.pdf, fly.eqtl_plots.interaction.pdf
+summary/          fly.interaction.top_assoc.all_chroms.txt.gz, fly.interaction.sig_genes.fdr0.05.tsv,
+                  fly.nominal_snp_min_p.txt.gz, fly.plot_pairs.tsv
+expression/       fly.fbgn_to_symbol.tsv, diagnostics/fly.expression_diagnostics.pdf (+ tables)
+plots/            fly.eqtl_plots.{main,interaction}.pdf, fly.manhattan_qq.pdf
 ```
 
 ## Notes

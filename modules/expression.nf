@@ -31,9 +31,12 @@ process PrepExpression {
         path "${params.prefix}.expr_pc_variance.tsv"
         path "${params.prefix}.gene_r2_known_covariates.tsv"
         path "${params.prefix}.expression_qc.pdf"
+        path "${params.prefix}.prep_objects.rds", emit: rds
         path "prep_expression.log"
 
     script:
+        def iv = params.interaction
+        def interaction_var = (iv == null || iv instanceof Boolean || iv.toString().trim() in ['', 'false', 'null']) ? '' : iv.toString()
         """
         Rscript ${script} \\
             --counts ${counts} \\
@@ -54,7 +57,7 @@ process PrepExpression {
             --lib_mad ${params.lib_mad} \\
             --pca_outlier_p ${params.pca_outlier_p} \\
             --norm_method ${params.norm_method} \\
-            --interaction "${params.interaction ?: ''}" \\
+            --interaction "${interaction_var}" \\
             --out_prefix ${params.prefix} 2>&1 | tee prep_expression.log
         """
 }

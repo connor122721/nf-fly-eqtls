@@ -13,6 +13,7 @@ suppressPackageStartupMessages({
 parser <- ArgumentParser()
 parser$add_argument("--cis_list", required=TRUE, help="File listing *.cis_qtl.txt.gz files")
 parser$add_argument("--fdr", type="double", default=0.05, help="eGene FDR threshold")
+parser$add_argument("--gene_map", default="", help="FBgn -> symbol map (prep_gene_map.R)")
 parser$add_argument("--out_prefix", default="fly", help="Output prefix")
 args <- parser$parse_args()
 
@@ -42,7 +43,13 @@ fwrite(summ, paste0(args$out_prefix, ".egenes_by_K.tsv"), sep="\t")
 # Per-chromosome summary for the best model
 fwrite(cis[K == best_k, .(n_genes=.N, n_egenes=sum(fdr < args$fdr, na.rm=TRUE)), by=chrom],
        paste0(args$out_prefix, ".egenes_by_chrom.K", best_k, ".tsv"), sep="\t")
-fwrite(cis[K == best_k][order(fdr)], paste0(args$out_prefix, ".cis_eqtl.K", best_k, ".all_chroms.txt.gz"), sep="\t")
+best <- cis[K == best_k][order(fdr, pval_beta)]
+if (args$gene_map != "" && file.exists(args$gene_map) && file.size(args$gene_map) > 0) {
+  gm <- fread(args$gene_map)[, .(phenotype_id=query_fbgn, gene_symbol, annotation_ID)]
+  best <- merge(best, gm, by="phenotype_id", all.x=TRUE, sort=FALSE)[order(fdr, pval_beta)]
+}
+fwrite(best, paste0(args$out_prefix, ".cis_eqtl.K", best_k, ".all_chroms.txt.gz"), sep="\t")
+fwrite(best[fdr < args$fdr], paste0(args$out_prefix, ".egenes.K", best_k, ".fdr", args$fdr, ".tsv"), sep="\t")
 
 pdf(paste0(args$out_prefix, ".egenes_by_K.pdf"), width=6, height=4)
 print(ggplot(summ, aes(x=K, y=n_egenes)) + geom_point() + geom_line() +

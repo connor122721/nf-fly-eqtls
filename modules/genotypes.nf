@@ -40,7 +40,7 @@ process GenotypePCA {
 
     output:
         path "${params.prefix}.geno_pca.eigenvec", emit: eigenvec
-        path "${params.prefix}.geno_pca.eigenval"
+        path "${params.prefix}.geno_pca.eigenval", emit: eigenval
         path "${params.prefix}.geno_pca.log"
 
     script:
